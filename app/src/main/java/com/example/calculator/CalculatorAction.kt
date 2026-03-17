@@ -9,4 +9,8 @@ sealed class CalculatorAction {
     data class Operation(val operation: CalculatorOperation): CalculatorAction()
     object CopyToClipboard: CalculatorAction()
     object LoadData: CalculatorAction()
+    data class SetPassKey(val passKey: String): CalculatorAction()
+    data class EnterPassKey(val passKey: String): CalculatorAction()
+    object AuthenticateBiometric: CalculatorAction()
+    object ResetPassKey: CalculatorAction()
 }

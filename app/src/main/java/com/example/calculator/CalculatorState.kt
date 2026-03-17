@@ -7,5 +7,9 @@ data class CalculatorState(
     val number2: String = "",
     val operation: CalculatorOperation? = null,
     val history: List<String> = emptyList(),
-    val themeColor: Color = Color(0xFFFF9800) // Default Orange
+    val themeColor: Color = Color(0xFFFF9800),
+    val isAuthorized: Boolean = false,
+    val isPassKeySet: Boolean = false,
+    val showPassKeySetup: Boolean = false,
+    val authError: String? = null
 )

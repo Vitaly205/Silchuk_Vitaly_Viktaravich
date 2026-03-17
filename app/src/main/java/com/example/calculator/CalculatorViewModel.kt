@@ -3,11 +3,16 @@ package com.example.calculator
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.SharedPreferences
 import android.widget.Toast
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
+import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.ViewModel
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
@@ -17,8 +22,15 @@ class CalculatorViewModel: ViewModel() {
         private set
 
     private val db = FirebaseFirestore.getInstance()
+    private var prefs: SharedPreferences? = null
 
-    init {
+    fun initPrefs(context: Context) {
+        prefs = context.getSharedPreferences("calculator_prefs", Context.MODE_PRIVATE)
+        val savedPassKey = prefs?.getString("pass_key", null)
+        state = state.copy(
+            isPassKeySet = savedPassKey != null,
+            isAuthorized = savedPassKey == null
+        )
         loadDataFromCloud()
     }
 
@@ -26,19 +38,92 @@ class CalculatorViewModel: ViewModel() {
         when(action) {
             is CalculatorAction.Number -> enterNumber(action.number)
             is CalculatorAction.Decimal -> enterDecimal()
-            is CalculatorAction.Clear -> state = CalculatorState()
+            is CalculatorAction.Clear -> {
+                state = state.copy(
+                    number1 = "",
+                    number2 = "",
+                    operation = null
+                )
+            }
             is CalculatorAction.Operation -> enterOperation(action.operation)
             is CalculatorAction.Calculate -> performCalculation()
             is CalculatorAction.Delete -> performDeletion()
-            is CalculatorAction.CopyToClipboard -> {
-                context?.let { copyToClipboard(it) }
-            }
+            is CalculatorAction.CopyToClipboard -> context?.let { copyToClipboard(it) }
             is CalculatorAction.LoadData -> loadDataFromCloud()
+            is CalculatorAction.SetPassKey -> setPassKey(action.passKey)
+            is CalculatorAction.EnterPassKey -> validatePassKey(action.passKey)
+            is CalculatorAction.ResetPassKey -> resetPassKey()
+            is CalculatorAction.AuthenticateBiometric -> {
+                if (context is FragmentActivity) {
+                    authenticateBiometric(context)
+                }
+            }
         }
     }
 
+    private fun setPassKey(passKey: String) {
+        if (passKey.length == 4) {
+            prefs?.edit()?.putString("pass_key", passKey)?.apply()
+            state = state.copy(isPassKeySet = true, isAuthorized = true, showPassKeySetup = false)
+        }
+    }
+
+    private fun validatePassKey(enteredKey: String) {
+        val savedKey = prefs?.getString("pass_key", null)
+        if (enteredKey == savedKey) {
+            state = state.copy(isAuthorized = true, authError = null)
+        } else {
+            state = state.copy(authError = "Incorrect Pass Key")
+        }
+    }
+
+    private fun resetPassKey() {
+        prefs?.edit()?.remove("pass_key")?.apply()
+        state = state.copy(isPassKeySet = false, isAuthorized = true)
+    }
+
+    private fun authenticateBiometric(activity: FragmentActivity) {
+        val biometricManager = BiometricManager.from(activity)
+        when (biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)) {
+            BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE -> {
+                state = state.copy(authError = "No biometric hardware detected")
+                return
+            }
+            BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE -> {
+                state = state.copy(authError = "Biometric hardware is unavailable")
+                return
+            }
+            BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> {
+                state = state.copy(authError = "No fingerprints enrolled. Use PIN.")
+                Toast.makeText(activity, "Please set up fingerprint in system settings", Toast.LENGTH_LONG).show()
+                return
+            }
+        }
+
+        val executor = ContextCompat.getMainExecutor(activity)
+        val biometricPrompt = BiometricPrompt(activity, executor,
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    super.onAuthenticationSucceeded(result)
+                    state = state.copy(isAuthorized = true, authError = null)
+                }
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    super.onAuthenticationError(errorCode, errString)
+                    state = state.copy(authError = errString.toString())
+                }
+            })
+
+        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("Biometric Login")
+            .setSubtitle("Log in using your fingerprint")
+            .setNegativeButtonText("Use Pass Key")
+            .build()
+
+        biometricPrompt.authenticate(promptInfo)
+    }
+
     private fun loadDataFromCloud() {
-        // Load Theme from Firestore
         db.collection("settings").document("theme").get()
             .addOnSuccessListener { document ->
                 val colorHex = document.getString("primaryColor")
@@ -51,7 +136,6 @@ class CalculatorViewModel: ViewModel() {
                 }
             }
 
-        // Load History from Firestore
         db.collection("history")
             .orderBy("timestamp", Query.Direction.DESCENDING)
             .limit(5)
